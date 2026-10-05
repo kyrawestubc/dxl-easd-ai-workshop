@@ -117,6 +117,34 @@ def review_contract(spec: dict, ai) -> list[dict]:
     
     return verified_findings
 
+
+
+def isValidErrorStatus(status: int) -> bool:
+    """Check if a status code is a valid client error for negative tests.
+    
+    Args:
+        status: HTTP status code
+    
+    Returns:
+        True if status is one of 400, 401, 403, 404, 409, or 422, False otherwise.
+    """
+    valid_statuses = {400, 401, 403, 404, 409, 422}
+    return status in valid_statuses
+
+
+def hasRequiredFields(case: dict, required_fields: list) -> bool:
+    """Check if a test case has all required fields.
+    
+    Args:
+        case: The test case dictionary
+        required_fields: List of field names that must be present
+    
+    Returns:
+        True if all required fields are present in case, False otherwise.
+    """
+    return all(field in case for field in required_fields)
+
+
 def design_negative_tests(spec: dict, ai) -> list[dict]:
     """Level 2 -- return runnable test ideas for operations that really exist.
 
@@ -149,7 +177,27 @@ def design_negative_tests(spec: dict, ai) -> list[dict]:
       3. The case has all required fields: name, method, path, input,
          expected_status.
     """
-    return ai.ask("negative_tests", spec)
+    findings = ai.ask("negative_tests", spec)
+    # Filter 1: Keep only findings where the endpoint actually exists
+    endpoint_verified = [
+        finding for finding in findings
+        if doesSpecExist(spec, finding["path"], finding["method"])
+    ]
+
+    # Filter 2: keep only findings with a valid expected status
+    status_verified = [
+        finding for finding in endpoint_verified
+        if isValidErrorStatus(finding.get("expected_status"))
+    ]
+
+    # Filter 3: keep only findings with the required fields
+    required_fields = ["name", "method", "path", "input", "expected_status"]
+    valid_findings = [
+        finding for finding in status_verified
+        if hasRequiredFields(finding, required_fields)
+    ]
+
+    return valid_findings
 
 
 def diagnose_incident(logs: str, ai) -> dict:
