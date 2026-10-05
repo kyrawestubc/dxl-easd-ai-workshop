@@ -19,6 +19,56 @@ that are verifiable against real evidence survive.
 """
 
 
+def doesSpecExist(spec: dict, path: str, method: str) -> bool:
+    """Check if a path and method exist in the OpenAPI spec.
+    
+    Args:
+        spec: The OpenAPI specification dictionary
+        path: The API path (e.g., "/orders")
+        method: The HTTP method in lowercase (e.g., "get", "post")
+    
+    Returns:
+        True if spec["paths"][path][method] exists, False otherwise.
+    """
+    try:
+        return path in spec.get("paths", {}) and method in spec["paths"][path]
+    except (KeyError, TypeError):
+        return False
+
+
+def resolvePointer(spec: dict, pointer: str) -> bool:
+    """Check if a JSON Pointer resolves to a real location in spec.
+    
+    Args:
+        spec: The OpenAPI specification dictionary
+        pointer: A JSON Pointer string (e.g., "/paths/~1orders/get")
+    
+    Returns:
+        True if the pointer resolves to a real location in spec, False otherwise.
+    """
+    if not pointer.startswith("/"):
+        return False
+    
+    parts = pointer.split("/")[1:]  # Skip the first empty string from leading /
+    current = spec
+    
+    try:
+        for part in parts:
+            # Decode ~1 to / and ~0 to ~ (JSON Pointer spec)
+            decoded_part = part.replace("~1", "/").replace("~0", "~")
+            
+            # Handle array indices
+            if isinstance(current, list):
+                index = int(decoded_part)
+                current = current[index]
+            else:
+                # Handle dictionary keys
+                current = current[decoded_part]
+        return True
+    except (KeyError, TypeError, ValueError, IndexError):
+        return False
+
+
 def review_contract(spec: dict, ai) -> list[dict]:
     """Level 1 -- return only findings supported by the OpenAPI contract.
 
@@ -51,8 +101,21 @@ def review_contract(spec: dict, ai) -> list[dict]:
          "/paths/~1orders/get" is spec["paths"]["/orders"]["get"].
          It is not "//orders" -- the slash belongs to the key name "/orders".
     """
-    return ai.ask("contract_review", spec)
-
+    raw_findings = ai.ask("contract_review", spec)
+    
+    # Filter 1: Keep only findings where the endpoint actually exists
+    endpoint_verified = [
+        finding for finding in raw_findings
+        if doesSpecExist(spec, finding["path"], finding["method"])
+    ]
+    
+    # Filter 2: Keep only findings where the evidence pointer resolves to a real location
+    verified_findings = [
+        finding for finding in endpoint_verified
+        if resolvePointer(spec, finding.get("evidence_pointer", ""))
+    ]
+    
+    return verified_findings
 
 def design_negative_tests(spec: dict, ai) -> list[dict]:
     """Level 2 -- return runnable test ideas for operations that really exist.
